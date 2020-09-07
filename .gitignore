@@ -172,3 +172,6 @@ notebooks/
 data/
 # ignore catalyst logs
 logs/
+
+*_pid
+log.txt

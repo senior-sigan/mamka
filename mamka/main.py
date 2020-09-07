@@ -4,10 +4,23 @@ from Cocoa import NSEvent, NSKeyDownMask
 from Quartz import CGWindowListCopyWindowInfo, kCGWindowListOptionOnScreenOnly, kCGNullWindowID
 from PyObjCTools import AppHelper
 
+from Quartz.CoreGraphics import CGEventSourceSecondsSinceLastEventType, kCGEventSourceStateHIDSystemState, kCGAnyInputEventType
+
+import time
+import os
+import json
+
+
+def get_time_ms():
+    return time.time_ns() // 1000000
+
+
 class AppDelegate(NSObject):
-    def applicationDidFinishLaunching_(self, note):
-        NSEvent.addGlobalMonitorForEventsMatchingMask_handler_(NSKeyDownMask, self.handler.on_key_down)
-        NSEvent.addLocalMonitorForEventsMatchingMask_handler_(NSKeyDownMask, self.handler.on_key_down)
+    # def applicationDidFinishLaunching_(self, note):
+    #     NSEvent.addGlobalMonitorForEventsMatchingMask_handler_(
+    #         NSKeyDownMask, self.handler.on_key_down)
+    #     NSEvent.addLocalMonitorForEventsMatchingMask_handler_(
+    #         NSKeyDownMask, self.handler.on_key_down)
 
     def applicationActivated_(self, note):
         app = note.userInfo().objectForKey_('NSWorkspaceApplicationKey')
@@ -18,6 +31,7 @@ class AppDelegate(NSObject):
 
     def writeActiveApp_(self, timer):
         self.handler.on_update()
+
 
 class GoogleChrome:
     def __init__(self):
@@ -35,6 +49,7 @@ class GoogleChrome:
             return None
 
         return str(res[0].stringValue())
+
 
 class Spotify:
     def __init__(self):
@@ -60,65 +75,80 @@ class Spotify:
             return None
         return res
 
+
 def get_current_window_name(app_name):
-        if app_name is None:
-            return None
-        options = kCGWindowListOptionOnScreenOnly
-        window_list = CGWindowListCopyWindowInfo(options, kCGNullWindowID)
-        for window in window_list:
-            try:
-                if window['kCGWindowOwnerName'] == app_name:
-                    print(window)
-                    window_name = window['kCGWindowName']
-                    return window_name
-            except KeyError:
-                pass
+    if app_name is None:
         return None
+    options = kCGWindowListOptionOnScreenOnly
+    window_list = CGWindowListCopyWindowInfo(options, kCGNullWindowID)
+    for window in window_list:
+        try:
+            if window['kCGWindowOwnerName'] == app_name:
+                window_name = window['kCGWindowName']
+                return window_name
+        except KeyError:
+            pass
+    return None
+
+
+def get_foremost_app():
+    ws = NSWorkspace.sharedWorkspace()
+    app = ws.frontmostApplication()
+    return app.localizedName()
+
+
+def seconds_since_last_input() -> float:
+    return CGEventSourceSecondsSinceLastEventType(
+        kCGEventSourceStateHIDSystemState,
+        kCGAnyInputEventType
+    )
+
 
 class Handler:
     def __init__(self):
         self.google_chrome = GoogleChrome()
         self.spotify = Spotify()
 
-        self.workspace = NSWorkspace.sharedWorkspace()
-        self.current_app = {'name': None}
+        self.state = {'app_name': get_foremost_app()}
 
-    def on_key_down(self, event):
-        # print(event)
-        # TODO: use it to measure AFK
-        # TODO: add mouse activity
-        pass
+    # def on_key_down(self, event):
+    #     # print(event)
+    #     # TODO: use it to measure AFK
+    #     # TODO: add mouse activity
+    #     pass
 
-    def on_sleep(self):
-        self.current_app = {
-            'name': '__LOCKEDSCREEN'
+    def on_sleep(self) -> None:
+        self.state = {
+            'app_name': '__LOCKEDSCREEN'
         }
 
-    def on_app_activated(self, app):
+    def on_app_activated(self, app) -> None:
         app_name = app.localizedName()
-        self.current_app = {
-            'name': app_name
+        self.state = {
+            'app_name': app_name
         }
         if app_name == "Google Chrome":
-            self.current_app['tab'] = self.google_chrome.get_current_tab()
-        print(f"activated {self.current_app}")
+            self.state['tab'] = self.google_chrome.get_current_tab()
 
-    def on_update(self):
-        app_name = self.current_app['name']
-        if app_name == '__LOCKEDSCREEN':
-            return
+    def on_update(self) -> None:
+        app_name = self.state['app_name']
+        if app_name != '__LOCKEDSCREEN':
+            win_name = get_current_window_name(app_name)
+            self.state['win_name'] = win_name
+        self.state['music'] = self.spotify.get_data()
+        self.state['time'] = get_time_ms()
+        self.state['last_input_delta'] = seconds_since_last_input()
+        print(f"Tick: {self.state}")
+        with open("log.txt", 'a') as fd:
+            log_entry = json.dumps(self.state)
+            fd.write(log_entry + '\n')
 
-        win_name = get_current_window_name(app_name)
-        self.current_app['win_name'] = win_name
-        music_data = self.spotify.get_data()
-        print(f"Tick: {self.current_app}. {music_data}")
 
 class EventSniffer:
-    def __init__(self):
-        self.polling_time = 1 # in seconds
+    def __init__(self, polling_time: float = 1) -> None:
+        self.polling_time = polling_time  # in seconds
 
-    def run(self):
-        print("Running app")
+    def run(self) -> None:
         NSApplication.sharedApplication()
         self.delegate = AppDelegate.alloc().init()
         self.delegate.handler = Handler()
@@ -142,13 +172,23 @@ class EventSniffer:
             None,
         )
 
-        NSTimer.scheduledTimerWithTimeInterval_target_selector_userInfo_repeats_(self.polling_time, self.delegate, 'writeActiveApp:', None, True)
+        NSTimer.scheduledTimerWithTimeInterval_target_selector_userInfo_repeats_(
+            self.polling_time, self.delegate, 'writeActiveApp:', None, True)
 
         AppHelper.runConsoleEventLoop(maxTimeout=1)
 
+
 def main():
+    # TODO: check if it's already exist?
+    pid = str(os.getpid())
+    with open("mamka_pid", 'w') as f:
+        f.write(pid)
+
+    print(f"Running app. PID = {pid}")
+
     app = EventSniffer()
     app.run()
+
 
 if __name__ == "__main__":
     main()

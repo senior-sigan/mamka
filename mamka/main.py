@@ -54,16 +54,19 @@ class GoogleChrome:
 class Spotify:
     def __init__(self):
         self.src = """
-        tell application "Spotify"
-            set myTrack to name of current track
-            set myArtist to artist of current track
-            set myAlbum to album of current track
-            set info to ""
-            if player state as text is equal to "playing"
-                set info to myArtist & " – " & myTrack & " – " & myAlbum
-            end if
-	    end tell
-	    return info"""
+        if application "Spotify" is running then
+            tell application "Spotify"
+                set myTrack to name of current track
+                set myArtist to artist of current track
+                set myAlbum to album of current track
+                set info to ""
+                if player state as text is equal to "playing"
+                    set info to myArtist & " – " & myTrack & " – " & myAlbum
+                end if
+            end tell
+            return info
+        end if
+        """
         self.script = NSAppleScript.alloc().initWithSource_(self.src)
 
     def get_data(self):
